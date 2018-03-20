@@ -83,12 +83,14 @@ type RoutingTable struct {
 	buckets [IdLength * 8]*list.List
 }
 
-func NewRoutingTable(node *Contact) (ret *RoutingTable) {
+func NewRoutingTable(node *Contact) *RoutingTable {
+
+	var ret RoutingTable
 	for i := 0; i < IdLength*8; i++ {
 		ret.buckets[i] = list.New()
 	}
 	ret.node = *node
-	return
+	return &ret
 }
 
 func Filter(vs *list.List, f func(interface{}) bool) *list.Element {
@@ -125,8 +127,8 @@ type ContactRecord struct {
 	sortKey NodeID
 }
 
-func (rec *ContactRecord) Less(other interface{}) bool {
-	return rec.sortKey.Less(other.(*ContactRecord).sortKey)
+func (rec ContactRecord) Less(other interface{}) bool {
+	return rec.sortKey.Less(other.(ContactRecord).sortKey)
 }
 
 func copyToVector(start *list.Element, end *list.Element, vec *[]ContactRecord, target NodeID) {
@@ -158,7 +160,7 @@ func (table *RoutingTable) FindClosest(target NodeID, count int) []ContactRecord
 	// sort.Sort(ret)
 	// if ret.Len() > count {
 	// 	ret.Cut(count, ret.Len())
-	//}
+	// }
 	return ret
 }
 
@@ -308,6 +310,7 @@ func (k *Kademlia) IterativeFindNode(target NodeID, delta int) (ret *list.List) 
 			pending++
 		}
 	}
+
 	// sort.Sort(ret)
 	// if ret.Len() > BucketSize {
 	// 	ret.Cut(BucketSize, ret.Len())
@@ -326,10 +329,19 @@ func main() {
 	fmt.Println(nodeID2)
 	fmt.Println(nodeID3)
 
+	var nodeID1Contact Contact
+	nodeID1Contact.id = nodeID1
+	nodeID1Contact.address = "localhost:12000"
 	var nodeID2Contact Contact
 	nodeID2Contact.id = nodeID2
+	nodeID2Contact.address = "localhost:12001"
 	var nodeID3Contact Contact
 	nodeID3Contact.id = nodeID3
+	nodeID3Contact.address = "localhost:12002"
+
+	nodeKad := NewKademlia(&nodeID1Contact, "netword123")
+
+	nodeKad.Serve()
 
 	// routingTable := NewRoutingTable(nodeID1)
 

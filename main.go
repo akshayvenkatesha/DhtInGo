@@ -362,7 +362,7 @@ func (k *Kademlia) IterativeFindNode(target NodeID, delta int) (ret *list.List) 
 	return
 }
 
-func main() {
+func GetContactInfoBasedOnOption(serverOption int) (nodeIdContact Contact) {
 
 	nodeID1 := NewRandomNodeID()
 	nodeID2 := NewRandomNodeID()
@@ -382,42 +382,53 @@ func main() {
 	nodeID3Contact.Id = nodeID3
 	nodeID3Contact.Address = "localhost:12002"
 
-	fmt.Println("Press number for server ")
-	text := "1"
-	fmt.Scan(&text)
-	var nodeIdContact Contact
-	switch text {
-	case "1":
+	switch serverOption {
+	case 1:
 		nodeIdContact = nodeID1Contact
-	case "2":
+	case 2:
 		nodeIdContact = nodeID2Contact
-	case "3":
+	case 3:
 		nodeIdContact = nodeID3Contact
 	}
 
+	return
+}
+
+func ReadOption() (option int) {
+	fmt.Println("Press")
+	fmt.Println("1 for Update")
+	fmt.Println("2 for IterativeFindNode")
+	fmt.Scan(&option)
+	return
+}
+
+func main() {
+
+	fmt.Println("Press number for server ")
+	var serverOption int
+	fmt.Scan(&serverOption)
+	nodeIdContact := GetContactInfoBasedOnOption(serverOption)
 	nodeKad := NewKademlia(&nodeIdContact, "netword123")
 
 	nodeKad.Serve()
 
 	fmt.Println("enter number for client")
-	client := "1"
+	var client int
 	fmt.Scan(&client)
-	var nodeIdClientContact Contact
-	switch client {
-	case "1":
-		nodeIdClientContact = nodeID1Contact
-	case "2":
-		nodeIdClientContact = nodeID2Contact
-	case "3":
-		nodeIdClientContact = nodeID3Contact
-	}
+	nodeIdClientContact := GetContactInfoBasedOnOption(client)
 	nodeKad.routes.Update(&nodeIdClientContact)
-	nodeKad.IterativeFindNode(nodeIdClientContact.Id, 1)
-	// routingTable := NewRoutingTable(nodeID1)
 
-	// routingTable.Update(&nodeID2Contact)
-	// routingTable.Update(&nodeID3Contact)
-
-	// findRes := routingTable.FindClosest(nodeID2, 2)
-	// fmt.Println(findRes[0].node.Id)
+	for {
+		option := ReadOption()
+		switch option {
+		case 1:
+			var node int
+			fmt.Println("enter node id to add")
+			fmt.Scan(&node)
+			cont := GetContactInfoBasedOnOption(node)
+			nodeKad.routes.Update(&cont)
+		case 2:
+			nodeKad.IterativeFindNode(nodeIdClientContact.Id, 1)
+		}
+	}
 }

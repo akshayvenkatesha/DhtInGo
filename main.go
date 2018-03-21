@@ -74,8 +74,8 @@ func (node NodeID) PrefixLen() (ret int) {
 const BucketSize = 20
 
 type Contact struct {
-	id      NodeID
-	address string
+	Id      NodeID
+	Address string
 }
 
 type RoutingTable struct {
@@ -96,7 +96,7 @@ func NewRoutingTable(node *Contact) *RoutingTable {
 func Filter(vs *list.List, f func(interface{}) bool) *list.Element {
 
 	for v := vs.Front(); v != nil; v = v.Next() {
-		if f(v) {
+		if f(v.Value) {
 			return v
 		}
 	}
@@ -104,11 +104,11 @@ func Filter(vs *list.List, f func(interface{}) bool) *list.Element {
 }
 
 func (table *RoutingTable) Update(contact *Contact) {
-	prefixLength := contact.id.Xor(table.node.id).PrefixLen()
+	prefixLength := contact.Id.Xor(table.node.Id).PrefixLen()
 	bucket := table.buckets[prefixLength]
 
 	element := Filter(bucket, func(x interface{}) bool {
-		return x.(*Contact).id.Equals(table.node.id)
+		return x.(*Contact).Id.Equals(table.node.Id)
 	})
 
 	if element == nil {
@@ -134,14 +134,14 @@ func (rec ContactRecord) Less(other interface{}) bool {
 func copyToVector(start *list.Element, end *list.Element, vec *[]ContactRecord, target NodeID) {
 	for elt := start; elt != end; elt = elt.Next() {
 		contact := elt.Value.(*Contact)
-		*vec = append(*vec, (ContactRecord{contact, contact.id.Xor(target)}))
+		*vec = append(*vec, (ContactRecord{contact, contact.Id.Xor(target)}))
 	}
 }
 
 func (table *RoutingTable) FindClosest(target NodeID, count int) []ContactRecord {
 	var ret []ContactRecord
 
-	bucketNum := target.Xor(table.node.id).PrefixLen()
+	bucketNum := target.Xor(table.node.Id).PrefixLen()
 	bucket := table.buckets[bucketNum]
 	copyToVector(bucket.Front(), nil, &ret, target)
 
@@ -216,7 +216,7 @@ func (k *Kademlia) Serve() (err error) {
 	rpc.Register(&KademliaCore{k})
 
 	rpc.HandleHTTP()
-	if l, err := net.Listen("tcp", k.routes.node.address); err == nil {
+	if l, err := net.Listen("tcp", k.routes.node.Address); err == nil {
 		go http.Serve(l, nil)
 	}
 	return
@@ -229,27 +229,31 @@ type FindNodeRequest struct {
 
 type FindNodeResponse struct {
 	RPCHeader
-	contacts []Contact
+	Contacts []Contact
 }
 
 func (kc *KademliaCore) FindNode(args *FindNodeRequest, response *FindNodeResponse) (err error) {
 	if err = kc.kad.HandleRPC(&args.RPCHeader, &response.RPCHeader); err == nil {
-		contacts := kc.kad.routes.FindClosest(args.target, BucketSize)
-		response.contacts = make([]Contact, len(contacts))
+		Contacts := kc.kad.routes.FindClosest(args.target, BucketSize)
+		response.Contacts = make([]Contact, len(Contacts))
 
-		for i := 0; i < len(contacts); i++ {
-			response.contacts[i] = *contacts[i].node
+		for i := 0; i < len(Contacts); i++ {
+			response.Contacts[i] = *Contacts[i].node
 		}
 	}
 	return
 }
 
 func (k *Kademlia) Call(contact *Contact, method string, args, reply interface{}) (err error) {
-	if client, err := rpc.DialHTTP("tcp", contact.address); err == nil {
+	if client, err := rpc.DialHTTP("tcp", contact.Address); err == nil {
+
 		err = client.Call(method, args, reply)
 		if err == nil {
 			k.routes.Update(contact)
+		} else {
+			fmt.Print(err)
 		}
+
 	}
 	return
 }
@@ -259,11 +263,39 @@ func (k *Kademlia) sendQuery(node *Contact, target NodeID, done chan []Contact) 
 	reply := FindNodeResponse{}
 
 	if err := k.Call(node, "KademliaCore.FindNode", &args, &reply); err == nil {
-		done <- reply.contacts
+		done <- reply.Contacts
 	} else {
 		done <- []Contact{}
 	}
 }
+
+type SliceOfContact []Contact
+
+func (pq SliceOfContact) Less(i, j int) bool {
+	// We want Pop to give us the highest, not lowest, priority so we use greater than here.
+	return pq[i].Id.Less(pq[j].Id)
+}
+
+func (pq SliceOfContact) Len() int { return len(pq) }
+
+func (pq SliceOfContact) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+}
+
+func (pq *SliceOfContact) Push(x interface{}) {
+
+	*pq = append(*pq, x.(Contact))
+}
+
+func (pq *SliceOfContact) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	//item.index = -1 // for safety
+	*pq = old[0 : n-1]
+	return item
+}
+
 func (k *Kademlia) IterativeFindNode(target NodeID, delta int) (ret *list.List) {
 	done := make(chan []Contact)
 
@@ -271,8 +303,12 @@ func (k *Kademlia) IterativeFindNode(target NodeID, delta int) (ret *list.List) 
 	//ret = new(vector.Vector).Resize(0, BucketSize)
 
 	// A heap of not-yet-queried *Contact structs
-	var frontier heap.Interface
 
+	var frontier SliceOfContact
+	//heap.Interface
+	heap.Init(&frontier)
+
+	ret = list.New()
 	// A map of client values we've seen so far
 	seen := make(map[string]bool)
 
@@ -281,32 +317,39 @@ func (k *Kademlia) IterativeFindNode(target NodeID, delta int) (ret *list.List) 
 		record := node
 		ret.PushFront(record)
 		//frontier.PushFront(record)
-		heap.Push(frontier, record.node)
+		heap.Push(&frontier, *record.node)
 
-		seen[record.node.id.String()] = true
+		seen[record.node.Id.String()] = true
 	}
 
 	// Start off delta queries
 	pending := 0
 	for i := 0; i < delta && frontier.Len() > 0; i++ {
 		pending++
-		go k.sendQuery(frontier.Pop().(*Contact), target, done)
+		go func() {
+			cont := frontier.Pop().(Contact)
+			k.sendQuery(&cont, target, done)
+		}()
 	}
 	// Iteratively look for closer nodes
 	for pending > 0 {
 		nodes := <-done
 		pending--
 		for _, node := range nodes {
+			fmt.Printf("got node %s ip %s .\n", node.Id.String(), node.Address)
 			// If we haven't seen the node before, add it
-			if _, ok := seen[node.id.String()]; ok == false {
-				ret.PushFront(&ContactRecord{&node, node.id.Xor(target)})
-				heap.Push(frontier, node)
-				seen[node.id.String()] = true
+			if _, ok := seen[node.Id.String()]; ok == false {
+				ret.PushFront(&ContactRecord{&node, node.Id.Xor(target)})
+				heap.Push(&frontier, node)
+				seen[node.Id.String()] = true
 			}
 		}
 
 		for pending < delta && frontier.Len() > 0 {
-			go k.sendQuery(frontier.Pop().(*Contact), target, done)
+			go func() {
+				con := frontier.Pop().(Contact)
+				k.sendQuery(&con, target, done)
+			}()
 			pending++
 		}
 	}
@@ -330,24 +373,51 @@ func main() {
 	fmt.Println(nodeID3)
 
 	var nodeID1Contact Contact
-	nodeID1Contact.id = nodeID1
-	nodeID1Contact.address = "localhost:12000"
+	nodeID1Contact.Id = nodeID1
+	nodeID1Contact.Address = "localhost:12000"
 	var nodeID2Contact Contact
-	nodeID2Contact.id = nodeID2
-	nodeID2Contact.address = "localhost:12001"
+	nodeID2Contact.Id = nodeID2
+	nodeID2Contact.Address = "localhost:12001"
 	var nodeID3Contact Contact
-	nodeID3Contact.id = nodeID3
-	nodeID3Contact.address = "localhost:12002"
+	nodeID3Contact.Id = nodeID3
+	nodeID3Contact.Address = "localhost:12002"
 
-	nodeKad := NewKademlia(&nodeID1Contact, "netword123")
+	fmt.Println("Press number for server ")
+	text := "1"
+	fmt.Scan(&text)
+	var nodeIdContact Contact
+	switch text {
+	case "1":
+		nodeIdContact = nodeID1Contact
+	case "2":
+		nodeIdContact = nodeID2Contact
+	case "3":
+		nodeIdContact = nodeID3Contact
+	}
+
+	nodeKad := NewKademlia(&nodeIdContact, "netword123")
 
 	nodeKad.Serve()
 
+	fmt.Println("enter number for client")
+	client := "1"
+	fmt.Scan(&client)
+	var nodeIdClientContact Contact
+	switch client {
+	case "1":
+		nodeIdClientContact = nodeID1Contact
+	case "2":
+		nodeIdClientContact = nodeID2Contact
+	case "3":
+		nodeIdClientContact = nodeID3Contact
+	}
+	nodeKad.routes.Update(&nodeIdClientContact)
+	nodeKad.IterativeFindNode(nodeIdClientContact.Id, 1)
 	// routingTable := NewRoutingTable(nodeID1)
 
 	// routingTable.Update(&nodeID2Contact)
 	// routingTable.Update(&nodeID3Contact)
 
 	// findRes := routingTable.FindClosest(nodeID2, 2)
-	// fmt.Println(findRes[0].node.id)
+	// fmt.Println(findRes[0].node.Id)
 }
